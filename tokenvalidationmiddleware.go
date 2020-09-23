@@ -22,21 +22,22 @@ type TokenValidationMiddleware struct {
 }
 
 // New creates a new instance of the middleware
-func New(opts ...Options) *TokenValidationMiddleware {
-	var o Options
-	if len(opts) == 0 {
-		o = Options{}
-	} else {
-		o = opts[0]
-	}
+func New() *TokenValidationMiddleware {
 	return &TokenValidationMiddleware{
-		Options: o,
+		Options: Options{},
+	}
+}
+
+// NewWithOptions creates a new instance of the middleware using the provided options
+func NewWithOptions(opts Options) *TokenValidationMiddleware {
+	return &TokenValidationMiddleware{
+		Options: opts,
 	}
 }
 
 // NewRSA256Validator will issue a new instance of the TokenValidationMiddleware that uses RS256 validation for a Bearer token
 func NewRSA256Validator(options *Options) *TokenValidationMiddleware {
-	return New(Options{
+	return NewWithOptions(Options{
 		ValidationKeyFunc: func(token *jwt.Token) (interface{}, error) {
 			// Verify 'aud' claim
 			if options.VerifyAudience {
@@ -54,7 +55,7 @@ func NewRSA256Validator(options *Options) *TokenValidationMiddleware {
 					return token, errors.New("Invalid issuer")
 				}
 			}
-			cert, err := getPemCert(token, options.Issuer, "", "")
+			cert, err := getPemCert(token, options.Issuer, options.JSONWebKeys)
 			if err != nil {
 				panic(err.Error())
 			}
@@ -105,7 +106,9 @@ func GetBearerToken(r *http.Request) (string, error) {
 // ValidateScope validates the presense of a specific scope on a bearer token
 func ValidateScope(scope string, tokenString string) bool {
 	token, _ := jwt.ParseWithClaims(tokenString, &Claims{}, nil)
-
+	if token == nil {
+		return false
+	}
 	claims, _ := token.Claims.(*Claims)
 
 	hasScope := false
@@ -119,8 +122,17 @@ func ValidateScope(scope string, tokenString string) bool {
 	return hasScope
 }
 
+// RequestHasScopes checks for a scope in the token in the Authorization Header of the Request
+func RequestHasScope(scope string, r *http.Request) bool {
+	token, err := GetBearerToken(r)
+	if err != nil {
+		return false
+	}
+	return ValidateScope(scope, token)
+}
+
 // getPemCert uses the IDP well-known endpoint to collect modulus and exponent to construct an XC5 public key
-func getPemCert(token *jwt.Token, authority string, mod string, exponent string) (*rsa.PublicKey, error) {
+func getPemCert(token *jwt.Token, authority string, jwks JSONWebKeys) (*rsa.PublicKey, error) {
 	var openIDConfig OpenIDConfig
 
 	nStr := ""
@@ -128,9 +140,9 @@ func getPemCert(token *jwt.Token, authority string, mod string, exponent string)
 
 	var cert *rsa.PublicKey
 
-	if mod != "" && len(mod) != 0 && exponent != "" && len(exponent) != 0 {
-		nStr = mod
-		eStr = exponent
+	if jwks.N != "" && len(jwks.N) != 0 && jwks.E != "" && len(jwks.E) != 0 {
+		nStr = jwks.N
+		eStr = jwks.E
 	} else {
 		wke := fmt.Sprintf("%s/.well-known/openid-configuration", authority)
 		resp, err := http.Get(wke)

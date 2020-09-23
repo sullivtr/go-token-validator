@@ -3,6 +3,7 @@ package tokenvalidationmiddleware
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/dgrijalva/jwt-go"
@@ -15,28 +16,133 @@ const (
 	exponent  = "AQAB"
 )
 
-func TestValidateBearerTokenIsSuccess(t *testing.T) {
+func TestNew(t *testing.T) {
+	tvm := New()
+	assert.NotNil(t, tvm)
+	assert.NotNil(t, tvm.Options)
+}
+
+func TestValidateBearerToken(t *testing.T) {
+	cases := []struct {
+		token       string
+		expectation bool
+	}{
+		{token: testToken, expectation: true},
+		{token: "", expectation: false},
+	}
 	mw := newDefaultMockMiddleware()
 
 	assert.Equal(t, mw.Options.Issuer, "http://fake-idp-issuer/")
 	assert.Equal(t, mw.Options.Audience, "http://fake-idp-aud/")
 
-	req, err := http.NewRequest(http.MethodGet, "http://fake-url-for-test.com", nil)
-	if err != nil {
-		assert.Fail(t, "unable to construct httpRequest for unit test")
+	for _, c := range cases {
+		req, err := http.NewRequest(http.MethodGet, "http://fake-url-for-test.com", nil)
+		if err != nil {
+			assert.Fail(t, "unable to construct httpRequest for unit test")
+		}
+
+		req.Header.Add("Authorization", c.token)
+		tokenIsValid, err := mw.ValidateBearerToken(req)
+
+		if !c.expectation {
+			assert.Error(t, err)
+		} else {
+			assert.NoError(t, err)
+		}
+		assert.Equal(t, c.expectation, tokenIsValid)
 	}
+}
+
+func TestNewRSA256Validator(t *testing.T) {
+	v := NewRSA256Validator(&Options{
+		Audience:       "http://fake-idp-aud/",
+		Issuer:         "http://fake-idp-issuer/",
+		VerifyAudience: true,
+		VerifyIssuer:   true,
+		JSONWebKeys: JSONWebKeys{
+			N: modulus,
+			E: exponent,
+		},
+	})
+	assert.NotNil(t, v)
+	req, err := http.NewRequest(http.MethodGet, "http://fake-url-for-test.com", nil)
+	assert.NoError(t, err)
 
 	req.Header.Add("Authorization", testToken)
-	tokenIsValid, err := mw.ValidateBearerToken(req)
-
-	assert.Nil(t, err)
+	tokenIsValid, err := v.ValidateBearerToken(req)
+	assert.NoError(t, err)
 	assert.True(t, tokenIsValid)
+}
+
+func TestRequestHasScope(t *testing.T) {
+	cases := []struct {
+		token       string
+		testScope   string
+		expectation bool
+	}{
+		{token: testToken, testScope: "testscope", expectation: true},
+		{token: "", testScope: "testscope", expectation: false},
+	}
+
+	for _, c := range cases {
+		req, err := http.NewRequest(http.MethodGet, "http://fake-url-for-test.com", nil)
+		if err != nil {
+			assert.Fail(t, "unable to construct httpRequest for unit test")
+		}
+		req.Header.Add("Authorization", c.token)
+
+		assert.Equal(t, c.expectation, RequestHasScope("testscope", req))
+	}
+}
+
+func TestGetBearerToken(t *testing.T) {
+	cases := []struct {
+		token         string
+		testScope     string
+		expectation   string
+		expectedError bool
+	}{
+		{token: testToken, testScope: "testscope", expectation: strings.Replace(testToken, "Bearer ", "", 1), expectedError: false},
+		{token: "", testScope: "testscope", expectation: "", expectedError: true},
+	}
+
+	for _, c := range cases {
+		req, err := http.NewRequest(http.MethodGet, "http://fake-url-for-test.com", nil)
+		if err != nil {
+			assert.Fail(t, "unable to construct httpRequest for unit test")
+		}
+		req.Header.Add("Authorization", c.token)
+
+		token, err := GetBearerToken(req)
+		assert.Equal(t, c.expectation, token)
+		if c.expectedError {
+			assert.Error(t, err)
+		} else {
+			assert.NoError(t, err)
+		}
+	}
+}
+
+func TestValidateScope(t *testing.T) {
+	cases := []struct {
+		token       string
+		testScope   string
+		expectation bool
+	}{
+		{token: strings.Replace(testToken, "Bearer ", "", 1), testScope: "testscope", expectation: true},
+		{token: strings.Replace(testToken, "Bearer ", "", 1), testScope: "missingscope", expectation: false},
+		{token: "", testScope: "testscope", expectation: false},
+	}
+
+	for _, c := range cases {
+		assert.Equal(t, c.expectation, ValidateScope(c.testScope, c.token), "expected: %s", c.testScope)
+	}
 }
 
 func newDefaultMockMiddleware() *TokenValidationMiddleware {
 	aud := "http://fake-idp-aud/"
 	iss := "http://fake-idp-issuer/"
-	return New(Options{
+	return NewWithOptions(Options{
 		VerifyIssuer:   true,
 		VerifyAudience: true,
 		Issuer:         iss,
@@ -50,7 +156,11 @@ func newDefaultMockMiddleware() *TokenValidationMiddleware {
 			if !checkIss {
 				return token, errors.New("Invalid issuer")
 			}
-			cert, err := getPemCert(token, iss, modulus, exponent)
+			jwks := JSONWebKeys{
+				E: exponent,
+				N: modulus,
+			}
+			cert, err := getPemCert(token, iss, jwks)
 			if err != nil {
 				panic(err.Error())
 			}
