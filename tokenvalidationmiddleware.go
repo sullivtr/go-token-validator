@@ -146,6 +146,9 @@ func getPemCert(token *jwt.Token, authority string, jwks JSONWebKeys) (*rsa.Publ
 	} else {
 		wke := fmt.Sprintf("%s/.well-known/openid-configuration", authority)
 		resp, err := http.Get(wke)
+		if err != nil {
+			return cert, err
+		}
 
 		// read the payload
 		body, err := ioutil.ReadAll(resp.Body)
@@ -162,6 +165,9 @@ func getPemCert(token *jwt.Token, authority string, jwks JSONWebKeys) (*rsa.Publ
 		}
 
 		jwksResp, err := http.Get(openIDConfig.JwksURI)
+		if err != nil {
+			return cert, err
+		}
 
 		var jwks = Jwks{}
 		err = json.NewDecoder(jwksResp.Body).Decode(&jwks)
