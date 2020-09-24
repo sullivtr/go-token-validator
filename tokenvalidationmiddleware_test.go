@@ -117,11 +117,11 @@ func TestNewRSA256Validator(t *testing.T) {
 		expectation bool
 		message     string
 	}{
-		// {token: genToken(key, false), issuer: issuer, audience: audience, expectation: true, message: "valid token should return true"},
-		// {token: genToken(key, true), issuer: issuer, audience: audience, expectation: false, message: "expired token should return false"},
-		// {token: "invalidtoken", issuer: issuer, audience: audience, expectation: false, message: "invalidtoken should return false"},
-		// {token: "", issuer: issuer, audience: audience, expectation: false, message: "empty token should return false"},
-		// {token: genToken(key, false), issuer: "invalidissuer", audience: audience, expectation: false, message: "invalidissuer should return false"},
+		{token: genToken(key, false), issuer: issuer, audience: audience, expectation: true, message: "valid token should return true"},
+		{token: genToken(key, true), issuer: issuer, audience: audience, expectation: false, message: "expired token should return false"},
+		{token: "invalidtoken", issuer: issuer, audience: audience, expectation: false, message: "invalidtoken should return false"},
+		{token: "", issuer: issuer, audience: audience, expectation: false, message: "empty token should return false"},
+		{token: genToken(key, false), issuer: "invalidissuer", audience: audience, expectation: false, message: "invalidissuer should return false"},
 		{token: genToken(key, false), issuer: issuer, audience: "invalidaudience", expectation: false, message: "invalidaudience should return false"},
 	}
 

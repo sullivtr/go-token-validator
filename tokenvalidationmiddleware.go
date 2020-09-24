@@ -35,7 +35,7 @@ func NewWithOptions(opts Options) *TokenValidationMiddleware {
 	}
 }
 
-func contains(s []string, in string) bool {
+func contains(s []interface{}, in string) bool {
 	for _, a := range s {
 		if a == in {
 			return true
@@ -54,14 +54,14 @@ func NewRSA256Validator(options *Options) *TokenValidationMiddleware {
 
 				tokenAud := token.Claims.(jwt.MapClaims)["aud"]
 
-				switch tokenAud := tokenAud.(type) {
+				switch tokenAud.(type) {
 				case string:
-					checkAud := token.Claims.(jwt.MapClaims).VerifyAudience(aud, false)
+					checkAud := token.Claims.(jwt.MapClaims).VerifyAudience(aud, options.VerifyAudience)
 					if !checkAud {
 						return token, errors.New("Invalid audience")
 					}
-				case []string:
-					if !contains(tokenAud, aud) {
+				case []interface{}:
+					if !contains(tokenAud.([]interface{}), aud) {
 						return token, errors.New("Invalid audience")
 					}
 				}
@@ -69,7 +69,7 @@ func NewRSA256Validator(options *Options) *TokenValidationMiddleware {
 			// Verify 'iss' claim
 			if options.VerifyIssuer {
 				iss := options.Issuer
-				checkIss := token.Claims.(jwt.MapClaims).VerifyIssuer(iss, true)
+				checkIss := token.Claims.(jwt.MapClaims).VerifyIssuer(iss, options.VerifyIssuer)
 				if !checkIss {
 					return token, errors.New("Invalid issuer")
 				}
