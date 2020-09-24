@@ -17,11 +17,6 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-type mockOIDCRequest struct {
-	URI  string
-	Body interface{}
-}
-
 const (
 	exponent = "AQAB"
 	issuer   = "http://fake-idp-issuer/"
@@ -68,7 +63,7 @@ func (suite TokenValidationSuite) TestNew() {
 	suite.NotNil(v.Options)
 }
 
-func (suite TokenValidationSuite) TestDefaultValidator() {
+func (suite TokenValidationSuite) TestGetDefaultValidator() {
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	cases := []struct {
 		issuer        string
@@ -358,9 +353,9 @@ func (suite TokenValidationSuite) TestGetPemCert() {
 		_, err = getPemCert(t, c.issuer)
 		httpmock.DeactivateAndReset()
 		if c.shouldErr {
-			suite.Error(err)
+			suite.Error(err, "%s should error", c.issuer)
 		} else {
-			suite.NoError(err)
+			suite.NoError(err, "%s should not error", c.issuer)
 		}
 	}
 }
