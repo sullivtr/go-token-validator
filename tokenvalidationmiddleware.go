@@ -35,6 +35,15 @@ func NewWithOptions(opts Options) *TokenValidationMiddleware {
 	}
 }
 
+func contains(s []string, in string) bool {
+	for _, a := range s {
+		if a == in {
+			return true
+		}
+	}
+	return false
+}
+
 // NewRSA256Validator will issue a new instance of the TokenValidationMiddleware that uses RS256 validation for a Bearer token
 func NewRSA256Validator(options *Options) *TokenValidationMiddleware {
 	return NewWithOptions(Options{
@@ -42,9 +51,19 @@ func NewRSA256Validator(options *Options) *TokenValidationMiddleware {
 			// Verify 'aud' claim
 			if options.VerifyAudience {
 				aud := options.Audience
-				checkAud := token.Claims.(jwt.MapClaims).VerifyAudience(aud, false)
-				if !checkAud {
-					return token, errors.New("Invalid audience")
+
+				tokenAud := token.Claims.(jwt.MapClaims)["aud"]
+
+				switch tokenAud := tokenAud.(type) {
+				case string:
+					checkAud := token.Claims.(jwt.MapClaims).VerifyAudience(aud, false)
+					if !checkAud {
+						return token, errors.New("Invalid audience")
+					}
+				case []string:
+					if !contains(tokenAud, aud) {
+						return token, errors.New("Invalid audience")
+					}
 				}
 			}
 			// Verify 'iss' claim
