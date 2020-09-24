@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"math/big"
 	"net/http"
 	"strings"
@@ -44,43 +43,48 @@ func contains(s []interface{}, in string) bool {
 	return false
 }
 
+// GetDefaultValidator godoc
+func GetDefaultValidator(options *Options) func(token *jwt.Token) (interface{}, error) {
+	return func(token *jwt.Token) (interface{}, error) {
+		// Verify 'aud' claim
+		if options.VerifyAudience {
+			aud := options.Audience
+
+			tokenAud := token.Claims.(jwt.MapClaims)["aud"]
+
+			switch tokenAud.(type) {
+			case string:
+				checkAud := token.Claims.(jwt.MapClaims).VerifyAudience(aud, options.VerifyAudience)
+				if !checkAud {
+					return token, errors.New("Invalid audience")
+				}
+			case []interface{}:
+				if !contains(tokenAud.([]interface{}), aud) {
+					return token, errors.New("Invalid audience")
+				}
+			}
+		}
+		// Verify 'iss' claim
+		if options.VerifyIssuer {
+			iss := options.Issuer
+			checkIss := token.Claims.(jwt.MapClaims).VerifyIssuer(iss, options.VerifyIssuer)
+			if !checkIss {
+				return token, errors.New("Invalid issuer")
+			}
+		}
+		cert, err := getPemCert(token, options.Issuer)
+		if err != nil {
+			return token, errors.New("Unable to get signing key")
+		}
+		return cert, nil
+	}
+}
+
 // NewRSA256Validator will issue a new instance of the TokenValidationMiddleware that uses RS256 validation for a Bearer token
 func NewRSA256Validator(options *Options) *TokenValidationMiddleware {
 	return NewWithOptions(Options{
-		ValidationKeyFunc: func(token *jwt.Token) (interface{}, error) {
-			// Verify 'aud' claim
-			if options.VerifyAudience {
-				aud := options.Audience
-
-				tokenAud := token.Claims.(jwt.MapClaims)["aud"]
-
-				switch tokenAud.(type) {
-				case string:
-					checkAud := token.Claims.(jwt.MapClaims).VerifyAudience(aud, options.VerifyAudience)
-					if !checkAud {
-						return token, errors.New("Invalid audience")
-					}
-				case []interface{}:
-					if !contains(tokenAud.([]interface{}), aud) {
-						return token, errors.New("Invalid audience")
-					}
-				}
-			}
-			// Verify 'iss' claim
-			if options.VerifyIssuer {
-				iss := options.Issuer
-				checkIss := token.Claims.(jwt.MapClaims).VerifyIssuer(iss, options.VerifyIssuer)
-				if !checkIss {
-					return token, errors.New("Invalid issuer")
-				}
-			}
-			cert, err := getPemCert(token, options.Issuer)
-			if err != nil {
-				return token, errors.New("Unable to get signing key")
-			}
-			return cert, nil
-		},
-		SigningMethod: jwt.SigningMethodRS256,
+		ValidationKeyFunc: GetDefaultValidator(options),
+		SigningMethod:     jwt.SigningMethodRS256,
 	})
 
 }
@@ -101,9 +105,6 @@ func (m *TokenValidationMiddleware) ValidateBearerToken(r *http.Request) (bool, 
 			m.Options.SigningMethod.Alg(),
 			pt.Header["alg"])
 		return false, fmt.Errorf("Error validating token algorithm: %s", message)
-	}
-	if !pt.Valid {
-		return false, errors.New("Token is invalid")
 	}
 	nr := r.WithContext(context.WithValue(r.Context(), "user", pt))
 	*r = *nr
@@ -202,22 +203,27 @@ func getPemCert(token *jwt.Token, issuer string) (*rsa.PublicKey, error) {
 		return cert, err
 	}
 
-	cert = genXC5(nStr, eStr)
+	cert, err = genXC5(nStr, eStr)
+	if err != nil {
+		return cert, err
+	}
 
 	return cert, nil
 }
 
-func genXC5(nStr string, eStr string) *rsa.PublicKey {
+func genXC5(nStr string, eStr string) (*rsa.PublicKey, error) {
 	// decode the base64 bytes for n
+	var pub *rsa.PublicKey
+
 	nb, err := base64.RawURLEncoding.DecodeString(nStr)
 	if err != nil {
-		log.Fatal(err)
+		return pub, fmt.Errorf("%s", err)
 	}
 
 	// The default exponent is usually 65537
 	e := 65537
 	if eStr != "AQAB" && eStr != "AAEAAQ" {
-		log.Fatal("need to decode e:", eStr)
+		return pub, fmt.Errorf("need to decode e:  %v", eStr)
 	}
 
 	var pubKey = &rsa.PublicKey{
@@ -225,5 +231,5 @@ func genXC5(nStr string, eStr string) *rsa.PublicKey {
 		E: e,
 	}
 
-	return pubKey
+	return pubKey, nil
 }
