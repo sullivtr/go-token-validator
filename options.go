@@ -12,5 +12,4 @@ type Options struct {
 	VerifyAudience    bool
 	ValidationKeyFunc jwt.Keyfunc
 	SigningMethod     jwt.SigningMethod
-	JSONWebKeys       JSONWebKeys
 }

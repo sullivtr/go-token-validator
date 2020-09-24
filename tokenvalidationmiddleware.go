@@ -55,9 +55,9 @@ func NewRSA256Validator(options *Options) *TokenValidationMiddleware {
 					return token, errors.New("Invalid issuer")
 				}
 			}
-			cert, err := getPemCert(token, options.Issuer, options.JSONWebKeys)
+			cert, err := getPemCert(token, options.Issuer)
 			if err != nil {
-				panic(err.Error())
+				return token, errors.New("Unable to get signing key")
 			}
 			return cert, nil
 		},
@@ -72,9 +72,6 @@ func (m *TokenValidationMiddleware) ValidateBearerToken(r *http.Request) (bool, 
 	t, err := GetBearerToken(r)
 	if err != nil {
 		return false, fmt.Errorf("Error extracting token: %w", err)
-	}
-	if t == "" {
-		return false, fmt.Errorf("Authorization header format must be Bearer {token}")
 	}
 	pt, err := jwt.Parse(t, m.Options.ValidationKeyFunc)
 	if err != nil {
@@ -122,7 +119,7 @@ func ValidateScope(scope string, tokenString string) bool {
 	return hasScope
 }
 
-// RequestHasScopes checks for a scope in the token in the Authorization Header of the Request
+// RequestHasScope checks for a scope in the token in the Authorization Header of the Request
 func RequestHasScope(scope string, r *http.Request) bool {
 	token, err := GetBearerToken(r)
 	if err != nil {
@@ -131,8 +128,10 @@ func RequestHasScope(scope string, r *http.Request) bool {
 	return ValidateScope(scope, token)
 }
 
+var httpClient = &http.Client{}
+
 // getPemCert uses the IDP well-known endpoint to collect modulus and exponent to construct an XC5 public key
-func getPemCert(token *jwt.Token, authority string, jwks JSONWebKeys) (*rsa.PublicKey, error) {
+func getPemCert(token *jwt.Token, issuer string) (*rsa.PublicKey, error) {
 	var openIDConfig OpenIDConfig
 
 	nStr := ""
@@ -140,47 +139,42 @@ func getPemCert(token *jwt.Token, authority string, jwks JSONWebKeys) (*rsa.Publ
 
 	var cert *rsa.PublicKey
 
-	if jwks.N != "" && len(jwks.N) != 0 && jwks.E != "" && len(jwks.E) != 0 {
-		nStr = jwks.N
-		eStr = jwks.E
-	} else {
-		wke := fmt.Sprintf("%s/.well-known/openid-configuration", authority)
-		resp, err := http.Get(wke)
-		if err != nil {
-			return cert, err
-		}
+	wke := fmt.Sprintf("%s.well-known/openid-configuration", issuer)
+	resp, err := httpClient.Get(wke)
+	if err != nil {
+		return cert, err
+	}
 
-		// read the payload
-		body, err := ioutil.ReadAll(resp.Body)
+	// read the payload
+	body, err := ioutil.ReadAll(resp.Body)
 
-		defer resp.Body.Close()
+	defer resp.Body.Close()
 
-		if err != nil {
-			return cert, err
-		}
+	if err != nil {
+		return cert, err
+	}
 
-		err = json.Unmarshal(body, &openIDConfig)
-		if err != nil {
-			return cert, err
-		}
+	err = json.Unmarshal(body, &openIDConfig)
+	if err != nil {
+		return cert, err
+	}
 
-		jwksResp, err := http.Get(openIDConfig.JwksURI)
-		if err != nil {
-			return cert, err
-		}
+	jwksResp, err := httpClient.Get(openIDConfig.JwksURI)
+	if err != nil {
+		return cert, err
+	}
 
-		var jwks = Jwks{}
-		err = json.NewDecoder(jwksResp.Body).Decode(&jwks)
+	var jwks = Jwks{}
+	err = json.NewDecoder(jwksResp.Body).Decode(&jwks)
 
-		if err != nil {
-			return cert, err
-		}
+	if err != nil {
+		return cert, err
+	}
 
-		for k := range jwks.Keys {
-			if token.Header["kid"] == jwks.Keys[k].Kid {
-				nStr = jwks.Keys[k].N
-				eStr = jwks.Keys[k].E
-			}
+	for k := range jwks.Keys {
+		if token.Header["kid"] == jwks.Keys[k].Kid {
+			nStr = jwks.Keys[k].N
+			eStr = jwks.Keys[k].E
 		}
 	}
 
