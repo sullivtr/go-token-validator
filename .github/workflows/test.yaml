@@ -22,4 +22,4 @@ jobs:
         go-version: 1.15
 
     - name: Run test
-      run: go test ./... | awk '!/\[no test files\]/ {print}'
+      run: go test -v ./... | awk '!/\[no test files\]/ {print}'
