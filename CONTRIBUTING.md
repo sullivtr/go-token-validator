@@ -9,7 +9,6 @@ conduct](/CODE_OF_CONDUCT.md).
 
 Prerequisites:
 
-- `make`
 - [Go 1.15+](https://golang.org/doc/install)
 
 ## Test your change
