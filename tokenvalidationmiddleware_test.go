@@ -1,61 +1,381 @@
 package tokenvalidationmiddleware
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
-	"github.com/dgrijalva/jwt-go"
-	"github.com/stretchr/testify/assert"
+	gojwt "github.com/dgrijalva/jwt-go"
+	"github.com/jarcoal/httpmock"
+	"github.com/lestrrat-go/jwx/jwa"
+	"github.com/lestrrat-go/jwx/jws"
+	"github.com/lestrrat-go/jwx/jwt"
+	"github.com/stretchr/testify/suite"
 )
 
 const (
-	testToken = "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InVuaXR0ZXN0In0.eyJpc3MiOiJodHRwOi8vZmFrZS1pZHAtaXNzdWVyLyIsInN1YiI6IjBiMTNmODFiLTJjNTctNDkyMS1iNmIyLWE5MTNhOTMwNzcwNyIsImp0aSI6ImlkMTIzNDU2IiwidHlwIjoiQmVhcmVyIiwiYXVkIjoiaHR0cDovL2Zha2UtaWRwLWF1ZC8iLCJzY29wZSI6InRlc3RzY29wZSJ9.QCBVG1K8Nd0J3gKcwIABNrW75CpJApKw9OuhEcP-znn_rpkF49dURYxyYzlYqvLMi_MFM0yngcryMZwVdOo5-EIpOuS3f2rdRIhws4_ynPeyqUhhplR-mZVljm4BAbtjevnjsYh7p_0ia-TKbotDaODDeBJDKR1mvJIDtrqRkhI17uJ_sqNh05tRILk3nZkZf6v1ARmfK8A4z1OTIF3If5NCDa63AJF42ZvnfwuNN1o3fucmrXxOAtARp-3AT6qQ_2nuZwsZq_2Wt3nr_cl5DPIESwzrGabT_-owI-TSLbfu7m_67gvfeL6XW17oKK6xtTVJUvIMRobLkYN5yBMeNg"
-	modulus   = "qs6HgNBcDw37GfursjEnTqmgbfA1Drx7tzxny59_dxA4E227bldtRqY9qHJIGw5d6i3-UMTxYdADunzIIjSTIOwTs47erTIuUpWC-Be5PwvI_GTHh9nTQRKiQmBfKHrI2JcrFbRiLwmLy6fAFrfwSLxE3d0_SwEp4Nk5xvwiOQGT5VnfwdJboSLwcax3JiGhx3lg8gGpB-7C7j4dEnYuBlvT0QxGZ8aOMd5mVWlpmfookToJ00uL1ZF2HFhYqYcHTaY4yXRazl18pEJ_so2CX_pVq4fo1libV4rq9ldKAl1BwtRiS4v4HanaDAbzKPGThj6n2rFl3y0x6ymudel7Ew"
-	exponent  = "AQAB"
+	exponent = "AQAB"
+	issuer   = "http://fake-idp-issuer/"
+	audience = "http://fake-idp-aud/"
 )
 
-func TestValidateBearerTokenIsSuccess(t *testing.T) {
-	mw := newDefaultMockMiddleware()
-
-	assert.Equal(t, mw.Options.Issuer, "http://fake-idp-issuer/")
-	assert.Equal(t, mw.Options.Audience, "http://fake-idp-aud/")
-
-	req, err := http.NewRequest(http.MethodGet, "http://fake-url-for-test.com", nil)
-	if err != nil {
-		assert.Fail(t, "unable to construct httpRequest for unit test")
+func genToken(privateKey *rsa.PrivateKey, iss string, expired bool) string {
+	t := jwt.New()
+	_ = t.Set(jwt.IssuerKey, iss)
+	_ = t.Set(jwt.SubjectKey, "0b13f81b-2c57-4921-b6b2-a913a9307707")
+	_ = t.Set(jwt.AudienceKey, audience)
+	_ = t.Set(jwt.JwtIDKey, "id123456")
+	_ = t.Set("scope", "testscope")
+	_ = t.Set("typ", "Bearer")
+	if expired {
+		_ = t.Set(jwt.IssuedAtKey, 1600645295)
+		_ = t.Set(jwt.ExpirationKey, 1600645295)
+		_ = t.Set(jwt.NotBeforeKey, 1600645295)
 	}
 
-	req.Header.Add("Authorization", testToken)
-	tokenIsValid, err := mw.ValidateBearerToken(req)
+	kid := "unittest"
+	hdrs := jws.NewHeaders()
+	_ = hdrs.Set(jws.KeyIDKey, kid)
 
-	assert.Nil(t, err)
-	assert.True(t, tokenIsValid)
+	token, _ := jwt.Sign(t, jwa.RS256, privateKey, jwt.WithHeaders(hdrs))
+	return "Bearer " + string(token)
 }
 
-func newDefaultMockMiddleware() *TokenValidationMiddleware {
-	aud := "http://fake-idp-aud/"
-	iss := "http://fake-idp-issuer/"
-	return New(Options{
-		VerifyIssuer:   true,
-		VerifyAudience: true,
-		Issuer:         iss,
-		Audience:       aud,
-		ValidationKeyFunc: func(token *jwt.Token) (interface{}, error) {
-			checkAud := token.Claims.(jwt.MapClaims).VerifyAudience(aud, false)
-			if !checkAud {
-				return token, errors.New("Invalid audience")
-			}
-			checkIss := token.Claims.(jwt.MapClaims).VerifyIssuer(iss, true)
-			if !checkIss {
-				return token, errors.New("Invalid issuer")
-			}
-			cert, err := getPemCert(token, iss, modulus, exponent)
-			if err != nil {
-				panic(err.Error())
-			}
-			return cert, nil
+func getModulus(key *rsa.PrivateKey) string {
+	return base64.RawURLEncoding.EncodeToString(key.N.Bytes())
+}
+
+type TokenValidationSuite struct {
+	suite.Suite
+}
+
+func TestTokenValidationSuite(t *testing.T) {
+	suite.Run(t, new(TokenValidationSuite))
+}
+
+func (suite TokenValidationSuite) TestNew() {
+	v := New()
+	suite.NotNil(v)
+	suite.NotNil(v.Options)
+}
+
+func (suite TokenValidationSuite) TestGetDefaultValidator() {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	cases := []struct {
+		issuer        string
+		options       Options
+		bearer        string
+		wkeResponder  httpmock.Responder
+		jwksResponder httpmock.Responder
+		shouldErr     bool
+	}{
+		{
+			issuer:        "http://validissuer/",
+			options:       Options{VerifyIssuer: true, VerifyAudience: true, Issuer: "http://validissuer/", Audience: audience},
+			bearer:        genToken(key, "http://validissuer/", false),
+			wkeResponder:  httpmock.NewJsonResponderOrPanic(200, OpenIDConfig{JwksURI: "http://validissuer/"}),
+			jwksResponder: httpmock.NewJsonResponderOrPanic(200, Jwks{Keys: []JSONWebKeys{{N: getModulus(key), E: exponent, Kid: "unittest"}}}),
+			shouldErr:     false,
 		},
-		SigningMethod: jwt.SigningMethodRS256,
+		{
+			issuer:        "http://invalidaudience/",
+			options:       Options{VerifyIssuer: true, VerifyAudience: true, Issuer: "http://invalidaudience/", Audience: "wrongaud"},
+			bearer:        genToken(key, "http://invalidaudience/", false),
+			wkeResponder:  nil,
+			jwksResponder: nil,
+			shouldErr:     true,
+		},
+		{
+			issuer:        "http://invalidissuer/",
+			options:       Options{VerifyIssuer: true, VerifyAudience: true, Issuer: "http://wrongissuer/", Audience: audience},
+			bearer:        genToken(key, "http://invalidissuer/", false),
+			wkeResponder:  nil,
+			jwksResponder: nil,
+			shouldErr:     true,
+		},
+		{
+			issuer:        "http://invalidpemcert/",
+			options:       Options{VerifyIssuer: true, VerifyAudience: true, Issuer: "http://invalidpemcert/", Audience: audience},
+			bearer:        genToken(key, "http://invalidpemcert/", false),
+			wkeResponder:  httpmock.NewErrorResponder(errors.New("error")),
+			jwksResponder: nil,
+			shouldErr:     true,
+		},
+	}
+
+	for _, c := range cases {
+		httpmock.ActivateNonDefault(httpClient)
+		if c.wkeResponder != nil {
+			httpmock.RegisterResponder("GET", c.issuer+".well-known/openid-configuration", c.wkeResponder)
+		}
+		if c.jwksResponder != nil {
+			httpmock.RegisterResponder("GET", c.issuer, c.jwksResponder)
+		}
+
+		f := GetDefaultValidator(&c.options)
+		token := strings.Replace(c.bearer, "Bearer ", "", 1)
+		t, _, err := new(gojwt.Parser).ParseUnverified(token, gojwt.MapClaims{})
+		suite.NoError(err)
+		_, err = f(t)
+		httpmock.DeactivateAndReset()
+		if c.shouldErr {
+			suite.Error(err)
+		} else {
+			suite.NoError(err)
+		}
+	}
+}
+
+func (suite TokenValidationSuite) TestDefaultValidatorInvalidIssuer() {
+	token := "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwOi8vdGVzdGlzc3VlciIsImF1ZCI6Im15YXVkIn0.WUHkFhkN2SJy65jyoLjElNPimBXdehXP5_QeFM40Oh1OvrTEbX4dspzEC8RPcDfQYAjtB5XrODFPiNLRaLAUamYVkmBfbKCE3aRHN7gHOxOGDeZ09GDEjGJ59u9YKrQPIRPLURG9Wg3dFF03c48na61X7Ltn9a_6ICUQzqIsE0rLLCEphmARa75KHYt7TpDTcRiUPj4JSW3ivdxvaMMdQTvI3sgumlNb9VAv8tVPH92-s9mkRRnLiJLaN13Pkz3-0cghQXEqRZVUoVaXTDcZrzLu23as_xG5W8Jz2rFZxUmLVDdKN-wK6L6HFIRM5HFMC3CqWY4RDl3sk4bAiH1ouQ"
+	f := GetDefaultValidator(&Options{
+		Audience:       "bad",
+		VerifyAudience: true,
 	})
+	res, err := gojwt.Parse(token, f)
+	suite.False(res.Valid)
+	suite.Error(err)
+}
+
+func (suite TokenValidationSuite) TestNewRSA256Validator() {
+	m := NewRSA256Validator(&Options{VerifyIssuer: true, VerifyAudience: true, Issuer: "http://validissuer/", Audience: audience})
+	suite.NotNil(m)
+}
+
+type dummySigningMethod struct{}
+
+func (d dummySigningMethod) Alg() string {
+	return "dummy"
+}
+func (d dummySigningMethod) Verify(signingString, signature string, key interface{}) error {
+	return nil
+}
+func (d dummySigningMethod) Sign(signingString string, key interface{}) (string, error) {
+	return "", nil
+}
+
+func (suite TokenValidationSuite) TestValidateBearerToken() {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	cases := []struct {
+		middleware *TokenValidationMiddleware
+		bearer     string
+		valid      bool
+	}{
+		{
+			middleware: New(),
+			bearer:     "",
+			valid:      false,
+		},
+		{
+			middleware: NewWithOptions(Options{
+				ValidationKeyFunc: func(token *gojwt.Token) (interface{}, error) { return "", errors.New("error") },
+			}),
+			bearer: genToken(key, "http://my-fake-issuer", false),
+			valid:  false,
+		},
+		{
+			middleware: NewWithOptions(Options{
+				SigningMethod: dummySigningMethod{},
+				ValidationKeyFunc: func(token *gojwt.Token) (interface{}, error) {
+					return genXC5(getModulus(key), exponent)
+				},
+			}),
+			bearer: genToken(key, "http://my-fake-issuer", false),
+			valid:  false,
+		},
+		{
+			middleware: NewWithOptions(Options{
+				ValidationKeyFunc: func(token *gojwt.Token) (interface{}, error) {
+					return genXC5(getModulus(key), exponent)
+				},
+			}),
+			bearer: genToken(key, "http://my-fake-issuer", false),
+			valid:  true,
+		},
+	}
+
+	for _, c := range cases {
+		req, err := http.NewRequest(http.MethodGet, "http://fake-url-for-test.com", nil)
+		suite.NoError(err)
+		req.Header.Add("Authorization", c.bearer)
+		valid, err := c.middleware.ValidateBearerToken(req)
+		if c.valid {
+			suite.NoError(err)
+			suite.True(valid)
+		} else {
+			suite.Error(err)
+			suite.False(valid)
+		}
+	}
+}
+
+func (suite TokenValidationSuite) TestGetBearerToken() {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	token := genToken(key, issuer, false)
+
+	cases := []struct {
+		token         string
+		testScope     string
+		expectation   string
+		expectedError bool
+	}{
+		{token: token, testScope: "testscope", expectation: strings.Replace(token, "Bearer ", "", 1), expectedError: false},
+		{token: "", testScope: "testscope", expectation: "", expectedError: true},
+	}
+
+	for _, c := range cases {
+		req, err := http.NewRequest(http.MethodGet, "http://fake-url-for-test.com", nil)
+		if err != nil {
+			suite.Fail("unable to construct httpRequest for unit test")
+		}
+		req.Header.Add("Authorization", c.token)
+
+		token, err := GetBearerToken(req)
+		suite.Equal(c.expectation, token)
+		if c.expectedError {
+			suite.Error(err)
+		} else {
+			suite.NoError(err)
+		}
+	}
+}
+
+func (suite TokenValidationSuite) TestValidateScope() {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	token := genToken(key, issuer, false)
+	cases := []struct {
+		token       string
+		testScope   string
+		expectation bool
+	}{
+		{token: strings.Replace(token, "Bearer ", "", 1), testScope: "testscope", expectation: true},
+		{token: strings.Replace(token, "Bearer ", "", 1), testScope: "missingscope", expectation: false},
+		{token: "", testScope: "testscope", expectation: false},
+	}
+
+	for _, c := range cases {
+		suite.Equal(c.expectation, ValidateScope(c.testScope, c.token), "expected: %s", c.testScope)
+	}
+}
+
+func (suite TokenValidationSuite) TestRequestHasScope() {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	token := genToken(key, issuer, false)
+	cases := []struct {
+		token       string
+		testScope   string
+		expectation bool
+	}{
+		{token: token, testScope: "testscope", expectation: true},
+		{token: "", testScope: "testscope", expectation: false},
+	}
+
+	for _, c := range cases {
+		req, err := http.NewRequest(http.MethodGet, "http://fake-url-for-test.com", nil)
+		if err != nil {
+			suite.Fail("unable to construct httpRequest for unit test")
+		}
+		req.Header.Add("Authorization", c.token)
+
+		suite.Equal(c.expectation, RequestHasScope("testscope", req))
+	}
+}
+
+func (suite TokenValidationSuite) TestGetPemCert() {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	cases := []struct {
+		issuer        string
+		wkeResponder  httpmock.Responder
+		jwksResponder httpmock.Responder
+		shouldErr     bool
+	}{
+		{
+			issuer:        "http://test/",
+			wkeResponder:  httpmock.NewJsonResponderOrPanic(200, OpenIDConfig{JwksURI: "http://test/"}),
+			jwksResponder: httpmock.NewJsonResponderOrPanic(200, Jwks{Keys: []JSONWebKeys{{N: getModulus(key), E: exponent, Kid: "unittest"}}}),
+			shouldErr:     false,
+		},
+		{
+			issuer:        "http://errorissuer/",
+			wkeResponder:  httpmock.NewErrorResponder(errors.New("error")),
+			jwksResponder: nil,
+			shouldErr:     true,
+		},
+		{
+			issuer:        "http://invalidjsonwke/",
+			wkeResponder:  httpmock.NewStringResponder(200, "{invalidjsonwke}"),
+			jwksResponder: nil,
+			shouldErr:     true,
+		},
+		{
+			issuer:        "http://invalidjsonjwks/",
+			wkeResponder:  httpmock.NewJsonResponderOrPanic(200, OpenIDConfig{JwksURI: "http://invalidjsonjwks/"}),
+			jwksResponder: httpmock.NewStringResponder(200, "{invalidjsonjwks}"),
+			shouldErr:     true,
+		},
+		{
+			issuer:        "http://errorjwks/",
+			wkeResponder:  httpmock.NewJsonResponderOrPanic(200, OpenIDConfig{JwksURI: "http://errorjwks/"}),
+			jwksResponder: httpmock.NewErrorResponder(errors.New("error")),
+			shouldErr:     true,
+		},
+		{
+			issuer:        "http://missingkeys/",
+			wkeResponder:  httpmock.NewJsonResponderOrPanic(200, OpenIDConfig{JwksURI: "http://missingkeys/"}),
+			jwksResponder: httpmock.NewJsonResponderOrPanic(200, Jwks{Keys: []JSONWebKeys{{E: exponent, Kid: "unittest"}}}),
+			shouldErr:     true,
+		},
+		{
+			issuer:        "http://invalidXC5/",
+			wkeResponder:  httpmock.NewJsonResponderOrPanic(200, OpenIDConfig{JwksURI: "http://invalidXC5/"}),
+			jwksResponder: httpmock.NewJsonResponderOrPanic(200, Jwks{Keys: []JSONWebKeys{{N: "-", E: "-", Kid: "unittest"}}}),
+			shouldErr:     true,
+		},
+	}
+
+	for _, c := range cases {
+		token := genToken(key, c.issuer, false)
+		httpmock.ActivateNonDefault(httpClient)
+		if c.wkeResponder != nil {
+			httpmock.RegisterResponder("GET", c.issuer+".well-known/openid-configuration", c.wkeResponder)
+		}
+		if c.jwksResponder != nil {
+			httpmock.RegisterResponder("GET", c.issuer, c.jwksResponder)
+		}
+		token = strings.Replace(token, "Bearer ", "", 1)
+		t, _, err := new(gojwt.Parser).ParseUnverified(token, gojwt.MapClaims{})
+		suite.NoError(err)
+
+		_, err = getPemCert(t, c.issuer)
+		httpmock.DeactivateAndReset()
+		if c.shouldErr {
+			suite.Error(err, "%s should error", c.issuer)
+		} else {
+			suite.NoError(err, "%s should not error", c.issuer)
+		}
+	}
+}
+
+func (suite TokenValidationSuite) TestGenXC5() {
+	cases := []struct {
+		n           string
+		e           string
+		expectError bool
+	}{
+		{n: "-", e: "-", expectError: true},
+		{n: "AQAB", e: "-", expectError: true},
+		{n: "AQAB", e: "AQAB", expectError: false},
+	}
+	for _, c := range cases {
+		_, err := genXC5(c.n, c.e)
+		if c.expectError {
+			suite.Error(err)
+		} else {
+			suite.NoError(err)
+		}
+	}
 }
