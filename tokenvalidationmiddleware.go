@@ -159,7 +159,7 @@ func getPemCert(token *jwt.Token, issuer string) (*rsa.PublicKey, error) {
 
 	var cert *rsa.PublicKey
 
-	wke := fmt.Sprintf("%s.well-known/openid-configuration", issuer)
+	wke := fmt.Sprintf("%s/.well-known/openid-configuration", strings.TrimSuffix(issuer, "/"))
 	resp, err := httpClient.Get(wke)
 	if err != nil {
 		return cert, err
