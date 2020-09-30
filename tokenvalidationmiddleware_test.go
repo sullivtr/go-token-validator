@@ -108,12 +108,13 @@ func (suite TokenValidationSuite) TestGetDefaultValidator() {
 	}
 
 	for _, c := range cases {
+		c.issuer = strings.TrimSuffix(c.issuer, "/")
 		httpmock.ActivateNonDefault(httpClient)
 		if c.wkeResponder != nil {
-			httpmock.RegisterResponder("GET", c.issuer+".well-known/openid-configuration", c.wkeResponder)
+			httpmock.RegisterResponder("GET", c.issuer+"/.well-known/openid-configuration", c.wkeResponder)
 		}
 		if c.jwksResponder != nil {
-			httpmock.RegisterResponder("GET", c.issuer, c.jwksResponder)
+			httpmock.RegisterResponder("GET", c.issuer+"/", c.jwksResponder)
 		}
 
 		f := GetDefaultValidator(&c.options)
@@ -338,13 +339,14 @@ func (suite TokenValidationSuite) TestGetPemCert() {
 	}
 
 	for _, c := range cases {
+		c.issuer = strings.TrimSuffix(c.issuer, "/")
 		token := genToken(key, c.issuer, false)
 		httpmock.ActivateNonDefault(httpClient)
 		if c.wkeResponder != nil {
-			httpmock.RegisterResponder("GET", c.issuer+".well-known/openid-configuration", c.wkeResponder)
+			httpmock.RegisterResponder("GET", c.issuer+"/.well-known/openid-configuration", c.wkeResponder)
 		}
 		if c.jwksResponder != nil {
-			httpmock.RegisterResponder("GET", c.issuer, c.jwksResponder)
+			httpmock.RegisterResponder("GET", c.issuer+"/", c.jwksResponder)
 		}
 		token = strings.Replace(token, "Bearer ", "", 1)
 		t, _, err := new(gojwt.Parser).ParseUnverified(token, gojwt.MapClaims{})
