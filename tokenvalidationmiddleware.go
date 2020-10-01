@@ -82,11 +82,16 @@ func GetDefaultValidator(options *Options) func(token *jwt.Token) (interface{}, 
 
 // NewRSA256Validator will issue a new instance of the TokenValidationMiddleware that uses RS256 validation for a Bearer token
 func NewRSA256Validator(options *Options) *TokenValidationMiddleware {
-	return NewWithOptions(Options{
+	return New().SetOptions(Options{
 		ValidationKeyFunc: GetDefaultValidator(options),
 		SigningMethod:     jwt.SigningMethodRS256,
 	})
+}
 
+// SetOptions sets the options on a middleware instance
+func (m *TokenValidationMiddleware) SetOptions(options Options) *TokenValidationMiddleware {
+	m.Options = options
+	return m
 }
 
 // ValidateBearerToken will validate the cliams of the incoming auth token
