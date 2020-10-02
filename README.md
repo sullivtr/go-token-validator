@@ -1,11 +1,17 @@
 # Go-Token-Validator
 
-This provides automatic RS256 based JWT token validation by verifying claims, and validating signing keys with issuer.
+This package provides automatic `RS256` based JWT token validation by verifying claims, and validating signing keys with token issuer.
+
+## Why use go-token-validator?
+- Go beyond simple claims verification by verifying bearer token signing keys with your token issuer on the fly.
+- Add token validation middleware to any Go http router with little configuration.
+- Secure your Go REST APIs with any identity provider with bearer token authentication.
+
 
 ## Usage example
 
 ### Using middleware
- This example spins up a simple http server using Gin with token validation, and scope validation:
+ This example spins up a simple http server using the included default Gin token validation middleware:
 ```golang
 import (
   tv "github.com/tyler-technologies/go-token-validator"
@@ -21,9 +27,9 @@ func main() {
 		VerifyIssuer:   true,
   }
   
-	r.Use(tv.Gin(&vo))
+	r.Use(tv.RouterMiddlewares.Gin(&vo))
 
-	r.GET("/audit/", func(c *gin.Context) {
+	r.GET("/", func(c *gin.Context) {
 		authHeaderParts := strings.Split(c.Request.Header.Get("Authorization"), " ")
 		token := authHeaderParts[1]
 		hasScope := tv.ValidateScope("TestScope", token)
@@ -41,7 +47,7 @@ func main() {
 }
 ```
 
-### Building custom middleware func for a specific router: (Gin)
+### Building custom middleware func for a specific router: (Example using Gin Router)
 Example implementing RSA256 validation func using gin middleware: 
 ```go
 // Gin middleware for adding bearer token validation into the request pipeline
@@ -59,7 +65,6 @@ func Gin(o tvm.Options) gin.HandlerFunc {
 		c.Next()
 	}
 }
-
 ```
 
 
