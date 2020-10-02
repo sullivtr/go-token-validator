@@ -50,32 +50,3 @@ func TestEcho(t *testing.T) {
 		assert.Equal(t, c.code, rec.Code)
 	}
 }
-
-func TestEcho401(t *testing.T) {
-	key, _ := rsa.GenerateKey(rand.Reader, 2048)
-	wkeReq := &mockReq{URI: "/.well-known/openid-configuration"}
-	jwksReq := &mockReq{URI: "/"}
-
-	mockServer := newMockServer(wkeReq, jwksReq)
-	defer mockServer.Close()
-
-	wkeReq.Body = tvm.OpenIDConfig{JwksURI: mockServer.URL}
-	jwksReq.Body = tvm.Jwks{Keys: []tvm.JSONWebKeys{{N: getModulus(key), E: exponent, Kid: "unittest"}}}
-
-	e := echo.New()
-	req := httptest.NewRequest("GET", "/", nil)
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	h := Echo(tvm.Options{
-		Audience:       audience,
-		VerifyAudience: true,
-		Issuer:         mockServer.URL,
-		VerifyIssuer:   true,
-	})(func(c echo.Context) error {
-		return c.String(http.StatusOK, "test")
-	})
-
-	req.Header.Add("Authorization", genToken(key, mockServer.URL, true))
-
-	assert.EqualError(t, h(c), echo.ErrUnauthorized.Error())
-}
