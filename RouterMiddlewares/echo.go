@@ -1,7 +1,7 @@
 package routermiddlewares
 
 import (
-	"github.com/labstack/echo"
+	"github.com/labstack/echo/v4"
 	tvm "github.com/tyler-technologies/go-token-validator"
 )
 
